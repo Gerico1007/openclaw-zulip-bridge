@@ -16,6 +16,7 @@ A human can open a single public or private collaboration entry point and:
 - start or join a project conversation,
 - see which agent or human is carrying which line of work,
 - move naturally between async discussion and live terminal activity,
+- receive immediate artifact feedback in the forms that matter for the lane, including audio previews and score/partition outputs for music work,
 - preserve decisions, artifacts, and context across sessions and devices,
 - recover work without losing lineage when a device, session, or model changes.
 
@@ -83,7 +84,8 @@ Multiple agents can:
 - device-aware orchestration,
 - human stewardship over agent work,
 - collaborator handoffs that remain legible to humans,
-- bilingual or multi-register communication when useful.
+- bilingual or multi-register communication when useful,
+- immediate perceptual feedback loops, especially audio previews and visual score artifacts for music-oriented lanes.
 
 ---
 
@@ -136,6 +138,7 @@ The surface where humans and agents observe or perform active terminal work.
 The durable surface where extracted notes, generated specs, media, and archives persist.
 - **Behavior:** Stores canonical artifacts, metadata, and references back to the collaboration lane.
 - **Layout:** File-backed markdown/json artifacts first, with future room for indexed storage.
+- **Feedback expectation:** For music-oriented or sensory work, artifact publication should include immediate playable/listenable feedback when possible, not just text links.
 
 ## Components
 
