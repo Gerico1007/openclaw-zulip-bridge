@@ -217,6 +217,15 @@ Durable record of a generated or imported artifact.
 - `summary`
 - `related_message_refs`
 
+### MusicFeedbackBundle
+Minimum first-class publication bundle for music-oriented lanes.
+- `route_id`
+- `summary_path` — concise human-readable description of what changed
+- `audio_preview_path` — playable preview such as `.wav`, `.mp3`, or voice-note-friendly audio
+- `score_paths` — one or more score artifacts such as `.musicxml`, `.pdf`, or `.png`
+- `provenance_path` — metadata sidecar linking the bundle to messages, sessions, and generating actors
+- `published_refs` — message/topic refs where the bundle was announced back to humans
+
 ### ExecutionRecord
 State snapshot for live work.
 - `execution_id`
@@ -294,13 +303,14 @@ The bridge should make intervention natural:
 - Simexp is described as ingestion + artifact creation, not as the whole collaboration system.
 
 ### Task 5: Add trace/provenance minimums
-**Objective:** Define the smallest viable metadata layer for route, execution, and artifact continuity.
+**Objective:** Define the smallest viable metadata layer for route, execution, artifact continuity, and human-facing publication bundles.
 
 **Files:**
 - Modify: `docs/plans/2026-06-01-multi-agent-human-bridge-rise-spec.md`
 
 **Verification:**
 - Humans can recover who did what, where, and when after a session/device/model change.
+- Music-oriented lanes can publish a minimum bundle containing summary, audio preview, score artifact, and provenance metadata.
 
 ---
 
