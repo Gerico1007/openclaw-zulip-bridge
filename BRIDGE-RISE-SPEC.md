@@ -89,6 +89,19 @@ Multiple agents can:
 
 ---
 
+## Bridge Invariants
+
+These are the minimum structural commitments that keep the bridge coherent across tools and nodes.
+
+1. **One lane, many surfaces:** one collaborative lane may appear in Zulip, tmux, ttyd, and artifact storage, but it must keep one canonical identity.
+2. **Async and live are peers:** Zulip is not a notification afterthought for terminal work, and tmux is not a hidden back room. Both are first-class surfaces of the same lane.
+3. **Adapters stay narrow:** Zulip handles conversation transport, tmux handles execution presence, ttyd handles browser terminal exposure, and Simexp handles ingestion/archive. None should silently absorb the responsibilities of the others.
+4. **Human-readable continuity wins:** every live or durable surface should point back to the lane in terms a human can follow.
+5. **Per-node execution is explicit:** execution state may move between Eury, Larix, Tilia, or later nodes, but node changes must appear as continuation within one route, not as a new unnamed lane.
+6. **Artifacts are publishable, not merely saved:** an artifact is incomplete until the bridge can identify where it came from, what route it belongs to, and where humans were told about it.
+
+---
+
 ## Creative Advancement Scenarios
 
 ### Creative Advancement Scenario: Human opens a project lane and agents join
@@ -120,8 +133,6 @@ Multiple agents can:
 
 ---
 
-## Components
-
 ## Screens
 
 ### Collaboration Surface
@@ -145,26 +156,31 @@ The durable surface where extracted notes, generated specs, media, and archives 
 ### Canonical Route Identity
 Defines the shared identity of one collaborative lane.
 - **Behavior:** Assigns a stable route key across discussion, execution, and artifacts.
-- **Layout:** Includes `surface`, `space`, `thread`, `node`, `actor`, and `session` semantics.
+- **Boundary:** Owns lane identity only. It does not fetch messages, open tmux, proxy ttyd, or write artifacts.
+- **Layout:** Includes `account`, `space`, `thread`, `node`, `actor`, and `session` semantics.
 
 ### Zulip Transport Adapter
 Turns Zulip messages into normalized bridge events and normalized bridge replies into Zulip messages.
 - **Behavior:** Receives DMs and stream/topic events, derives thread/session identity, enforces policies, and publishes replies/artifacts back into the same lane.
+- **Boundary:** Owns conversation transport, policy gating, attachment intake, and reply publication. It should not invent tmux topology or artifact schemas.
 - **Layout:** Based on `openclaw-zulip-bridge` monitor, send, reply, and normalize layers.
 
 ### tmux Presence Adapter
 Makes live execution state part of the collaboration fabric.
 - **Behavior:** Maps route identities to tmux sessions/windows/panes, exposes current execution state, and links terminal work back to the collaboration lane.
+- **Boundary:** Owns terminal lifecycle, naming, capture, and attach/resume semantics. It should not become the source of truth for async thread history.
 - **Layout:** Session and pane naming should carry canonical route identity.
 
 ### ttyd Surface Adapter
 Publishes selected tmux workspaces into browser-accessible terminals.
 - **Behavior:** Makes live sessions visible to humans without requiring direct SSH.
+- **Boundary:** Owns browser exposure and auth surface only. It should point at tmux, not replace tmux's session model.
 - **Layout:** Mounted under `/terminal` or equivalent path on the same hostname as the collaboration surface.
 
 ### Simexp Ingestion Adapter
 Converts external note/public URL content into durable artifacts.
 - **Behavior:** Fetches note content, normalizes it to Markdown, attaches provenance metadata, and emits artifact references into the active lane.
+- **Boundary:** Owns import and archive mechanics. It should not own route resolution, live execution, or conversation policy.
 - **Layout:** Starts file-based and metadata-light, then grows into a structured artifact emitter.
 
 ### Handoff and Review Layer
@@ -179,35 +195,126 @@ Records who did what, where, and why.
 
 ---
 
+## Canonical Mapping Model
+
+### Route identity levels
+
+The bridge needs one canonical lane identity and several derived execution/publication identities.
+
+1. **Lane identity** — stable across async discussion, live execution, and durable artifacts.
+2. **Execution identity** — one lane on one node in one tmux workspace.
+3. **Publication identity** — the browser-visible or artifact-visible references that point humans back into the lane.
+
+### Normalized lane mapping
+
+| Concern | Current Reality | Desired bridge convention |
+|---|---|---|
+| Zulip account | `account.accountId` in the plugin runtime | `account_id` is a first-class field in every lane and event |
+| Space kind | `private` or stream message in Zulip | `space_kind` = `dm` or `stream` |
+| Space key | sender email for DMs; `stream_id`/stream name for streams | `space_key` is stable and machine-facing; human labels remain separate |
+| Thread key | Zulip topic, defaulting to `general` | `thread_key` always exists, with `general` treated as explicit current reality rather than omitted |
+| Session key | plugin builds `route.sessionKey` or falls back to `zulip:<account>:<channelId>`, then appends `:thread:<topic>` for non-default topics | lane metadata stores both the canonical lane identity and any runtime-specific `session_key` values |
+| Node | often implicit in tmux practice | every execution record carries an explicit node |
+
+### Concrete tmux mapping convention
+
+This is the recommended desired convention for the bridge, not a claim that it is implemented already.
+
+- **One tmux session per `route_id` × node**
+- **Session name:** `bridge.<node>.<route_slug>`
+- **Window 0:** `coordination` — lane summary, recent handoff notes, quick commands
+- **Window 1..n:** actor windows such as `human`, `codex`, `claude`, `simexp`, `publish`
+- **Pane titles:** actor or subtask labels, never anonymous shells
+
+Example desired mapping for a Zulip stream/topic lane:
+
+```text
+route_id: zulip.main.stream.42.topic.multi-agent-human-bridge
+execution_id: zulip.main.stream.42.topic.multi-agent-human-bridge@eury
+tmux session: bridge.eury.multi-agent-human-bridge
+tmux windows: coordination | codex | publish
+ttyd surface: /terminal/ -> selected tmux session bridge.eury.multi-agent-human-bridge
+```
+
+### ttyd route mapping
+
+Verified current reality from `ngrok-mux/README.md`:
+- `/` is reserved for Zulip
+- `/terminal/` proxies to ttyd with `--base-path /terminal`
+- the prototype ttyd command currently auto-attaches to one named tmux session (`salix-cursor`)
+
+Therefore the bridge should separate:
+- **public route path** — currently shared as `/terminal/`
+- **selected tmux session** — currently chosen by ttyd startup command or future selector logic
+
+Until route-aware ttyd selection exists, `surface_url` should refer to the shared `/terminal/` surface and pair it with explicit tmux session metadata rather than pretending each lane already has its own URL.
+
+---
+
 ## Data
 
 ### RouteIdentity
 A canonical collaboration identity.
 - `route_id`: stable project-lane identifier
-- `surface`: conversation or execution surface family
-- `space`: stream, DM, or equivalent parent context
-- `thread`: topic or sub-thread identity
-- `node`: Eury, Larix, Tilia, or equivalent execution host
+- `account_id`: Zulip/OpenClaw account scope when applicable
+- `space_kind`: `dm` or `stream`
+- `space_key`: machine-stable parent context identifier
+- `space_label`: human-readable stream or peer label
+- `thread_key`: canonical topic/thread key, explicit even when `general`
+- `thread_label`: human-readable topic display value
 - `owner`: human steward or owning role
 - `active_agents`: current assigned agents or runtimes
+- `current_nodes`: nodes presently hosting execution for this lane
+- `session_keys`: runtime-specific session keys already in use for this lane
 
 ### BridgeEvent
 Normalized inbound or outbound unit of activity.
 - `event_id`
 - `route_id`
+- `account_id`
 - `origin_surface`
 - `origin_ref`
+- `origin_message_id`
 - `actor_type` (`human`, `agent`, `system`)
 - `actor_id`
+- `actor_label`
 - `created_at`
 - `content`
 - `attachments`
 - `status`
+- `session_key`
+- `parent_session_key`
+
+### ZulipInboundContract
+The minimum verified inbound contract already visible in `openclaw-zulip-bridge`.
+- `From` — `zulip:<email>` for DMs or `zulip:channel:<channelId>` for streams
+- `To` — `user:<email>` for DMs or `stream:<streamNameOrId>:<topic>` for stream replies
+- `SessionKey` — base route session key, with `:thread:<topic>` suffix for non-`general` topics
+- `ParentSessionKey` — preserved when a thread-specific session derives from a broader route key
+- `AccountId`
+- `ChatType` — `direct` or `channel`
+- `ConversationLabel`
+- `GroupSubject` / `GroupChannel` for stream messages
+- `SenderName` / `SenderId`
+- `MessageSid`
+- `ReplyToId` / `MessageThreadId` when topic is not `general`
+- `Timestamp`
+- `WasMentioned`
+- `CommandAuthorized`
+- `MediaPath` / `MediaPaths` / `MediaUrl` / `MediaUrls` / `MediaType` / `MediaTypes`
+
+### ZulipOutboundContract
+The minimum verified outbound contract already visible in `openclaw-zulip-bridge`.
+- target syntax supports `user:<email>` and `stream:<stream>[:topic]`
+- topic override may be extracted from message content before send
+- reply publication preserves the existing lane by sending back to the same resolved `To` target
+- topic override is truncated to 60 characters before outbound send
 
 ### ArtifactRecord
 Durable record of a generated or imported artifact.
 - `artifact_id`
 - `route_id`
+- `account_id`
 - `artifact_type`
 - `source_url`
 - `local_path`
@@ -216,6 +323,9 @@ Durable record of a generated or imported artifact.
 - `node`
 - `summary`
 - `related_message_refs`
+- `source_session_key`
+- `published_to`
+- `provenance_sidecar`
 
 ### MusicFeedbackBundle
 Minimum first-class publication bundle for music-oriented lanes.
@@ -235,8 +345,32 @@ State snapshot for live work.
 - `window`
 - `pane`
 - `surface_url`
+- `surface_kind` (`local_tmux`, `ttyd`)
 - `status`
 - `last_seen_at`
+- `actors_present`
+- `route_session_key`
+
+---
+
+## Verified Local Contracts and Constraints
+
+### Verified from `openclaw-zulip-bridge`
+- The plugin treats Zulip as a threaded chat surface with `chatTypes: ["direct", "channel", "group", "thread"]` and thread support enabled.
+- The monitor asserts health immediately with `statusSink({ running: true, connected: true })`, confirming that runtime liveness is a first-class contract.
+- Inbound stream messages use the topic as thread identity and append `:thread:<topic>` to the session key for non-default topics.
+- The reply path sends back to `user:<email>` or `stream:<stream>:<topic>` targets, keeping publication inside the originating lane.
+- Fallback artifact replay matches on session key prefixes, which means the bridge already has a weak but real notion of lane continuity across runtime artifacts.
+
+### Verified from `ngrok-mux`
+- The live prototype keeps Zulip at `/` and ttyd at `/terminal/` under the same host.
+- ttyd supports a subpath deployment through `--base-path /terminal`.
+- The current prototype exposes one tmux attachment target at a time, so route-aware multiplexing remains future work rather than current reality.
+
+### Verified from `Simexp`
+- Simexp is currently a fetch-process-save pipeline, not a collaboration bus.
+- It reads configured sources or clipboard-derived sources, fetches note content, processes HTML into Markdown, and writes date-organized files.
+- The current archive writer persists Markdown files only; it does not yet emit route metadata, provenance sidecars, or publication callbacks.
 
 ---
 
@@ -263,7 +397,7 @@ The bridge should make intervention natural:
 **Objective:** Define the smallest stable shared identity linking Zulip topics, tmux sessions, and artifacts.
 
 **Files:**
-- Modify: `docs/plans/2026-06-01-multi-agent-human-bridge-rise-spec.md`
+- Modify: `BRIDGE-RISE-SPEC.md`
 - Create later if implementation starts: `src/bridge/route-identity.ts`
 
 **Verification:**
@@ -285,7 +419,7 @@ The bridge should make intervention natural:
 **Objective:** Turn existing tmux practice into explicit bridge semantics.
 
 **Files:**
-- Modify: `docs/plans/2026-06-01-multi-agent-human-bridge-rise-spec.md`
+- Modify: `BRIDGE-RISE-SPEC.md`
 - Read: `/home/gmusic/salix/production/ngrok-mux/README.md`
 
 **Verification:**
@@ -306,7 +440,7 @@ The bridge should make intervention natural:
 **Objective:** Define the smallest viable metadata layer for route, execution, artifact continuity, and human-facing publication bundles.
 
 **Files:**
-- Modify: `docs/plans/2026-06-01-multi-agent-human-bridge-rise-spec.md`
+- Modify: `BRIDGE-RISE-SPEC.md`
 
 **Verification:**
 - Humans can recover who did what, where, and when after a session/device/model change.
@@ -319,8 +453,10 @@ The bridge should make intervention natural:
 ### Local repos and docs
 - `openclaw-zulip-bridge/src/channel.ts`
 - `openclaw-zulip-bridge/src/zulip/monitor.ts`
+- `openclaw-zulip-bridge/src/zulip/monitor-helpers.ts`
 - `openclaw-zulip-bridge/src/zulip/send.ts`
 - `openclaw-zulip-bridge/src/zulip/reply-handler.ts`
+- `openclaw-zulip-bridge/src/zulip/fallback-reader.ts`
 - `/home/gmusic/salix/production/ngrok-mux/README.md`
 - `/home/gmusic/salix/repos/ea/simexp/README.md`
 - `/home/gmusic/salix/repos/ea/simexp/simexp/simex.py`
@@ -343,18 +479,27 @@ The bridge should make intervention natural:
 - Created a dedicated branch for this bridge work.
 - Wrote an initial RISE-oriented architecture/spec document inside the fork.
 - Anchored the document in Zulip, tmux/ttyd, Simexp, and llms-txt guidance.
+- Sharpened component boundaries so Zulip, tmux, ttyd, Simexp, and provenance each keep a narrow role.
+- Added a concrete mapping model for route identity, node-scoped execution identity, tmux naming, and ttyd exposure.
+- Added verified inbound/outbound Zulip contracts and tightened the minimum data schema.
 
 ### What was verified
 - Branch exists on the fork and tracks origin.
 - Local tmux sessions expose active bridge/orchestration clues.
 - `openclaw-zulip-bridge` passes its validation pipeline.
 - `jgwill/llms-txt` was cloned locally and queried through Context7.
+- `openclaw-zulip-bridge` currently derives session keys from Zulip account/channel identity and adds topic-derived thread suffixes for non-`general` topics.
+- `openclaw-zulip-bridge` sends replies to `user:<email>` and `stream:<stream>:<topic>` targets and truncates topic overrides to 60 characters.
+- `ngrok-mux` currently mounts ttyd only at `/terminal/` and its prototype binds ttyd to a single tmux attachment target.
+- `Simexp` currently archives fetched content into dated Markdown files without route-aware provenance metadata.
 
 ### What remains unverified
 - No implementation modules for canonical route identity exist yet.
-- No formal route-to-tmux convention has been encoded yet.
+- No route-aware ttyd selector or per-lane terminal publication surface has been implemented yet.
+- No formal route-to-tmux convention has been encoded in automation yet.
 - Simexp has not been upgraded into a metadata-emitting ingestion adapter yet.
 - No unified trace/provenance schema has been implemented yet.
+- No bridge controller currently creates or reconciles `RouteIdentity`, `ExecutionRecord`, and `ArtifactRecord` instances across repos.
 
 ### Risks
 - The strongest current bridge behavior exists as patterns spread across tools rather than one explicit shared core.
